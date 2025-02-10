@@ -32,6 +32,10 @@
 #include <itkImage.h>
 #include <itkMatrixOffsetTransformBase.h>
 #include <itkMetaDataObject.h>
+#include <MultiChunkGreedy.h>
+#include <PointSetGeodesicShooting.h>
+#include <PointSetGeodesicToWarp.h>
+
 namespace py=pybind11;
 
 using namespace std;
@@ -318,7 +322,7 @@ public:
     if(object.is_none())
     {
       // Pass as an empty input
-      api.AddCachedOutputObject(label, nullptr);
+      api.AddCachedOutputObject(label, (itk::Object *) nullptr);
     }
     else if(py::isinstance(object, sitk.attr("Image")))
     {
@@ -387,8 +391,43 @@ void instantiate_greedy(py::handle m, const char *name)
     ;
 }
 
-#include <PointSetGeodesicShooting.h>
-#include <PointSetGeodesicToWarp.h>
+
+
+template <unsigned int VDim>
+class GreedyMultiChunkWrapper
+{
+public:
+  void Execute(
+    const string &cmd, py::object sout, py::object serr, const py::kwargs& kwargs)
+  {
+    // Redirect the outputs if needed
+    py::scoped_ostream_redirect r_out(std::cout, sout);
+    py::scoped_ostream_redirect r_err(std::cerr, serr);
+
+           // Parse the command line to generate parameters
+    CommandLineHelper cl(cmd.c_str());
+    auto [chunk_greedy_param, greedy_param] = greedy_multi_chunk_parse_parameters(cl, false);
+    run_multichunk_greedy<VDim>(chunk_greedy_param, greedy_param);
+  }
+};
+
+template <unsigned int VDim>
+void instantiate_multichunk_greedy(py::handle m, const char *name)
+{
+  using API = GreedyMultiChunkWrapper<VDim>;
+  py::class_<API>(m, name, "Python API for the PICSL multi-chunk greedy tool")
+    .def(py::init<>([]() {
+      auto *c = new API();
+      return c;
+    }))
+    .def("run", &API::Execute,
+         "Execute the multi-chunk greedy command",
+         py::arg("command"),
+         py::arg("out") = py::module_::import("sys").attr("stdout"),
+         py::arg("err") = py::module_::import("sys").attr("stdout"))
+    ;
+}
+
 
 template <typename TPixel, unsigned int VDim>
 class LMShootAPIWrapper
@@ -455,4 +494,7 @@ PYBIND11_MODULE(picsl_greedy, m) {
   instantiate_lmshoot<double, 3>(m, "LMShoot3D");
   instantiate_lmshoot<float, 2>(m, "LMShootFloat2D");
   instantiate_lmshoot<float, 3>(m, "LMShootFloat3D");
+
+  instantiate_multichunk_greedy<2>(m, "MultiChunkGreedy2D");
+  instantiate_multichunk_greedy<3>(m, "MultiChunkGreedy3D");
 };
