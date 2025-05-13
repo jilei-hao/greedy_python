@@ -61,7 +61,8 @@ IF(FETCH_DEPENDENCIES)
         GIT_TAG        master
     )
     FetchContent_MakeAvailable(Greedy)
-    INCLUDE_DIRECTORIES(${greedy_SOURCE_DIR}/src)
+    # INCLUDE_DIRECTORIES(${greedy_SOURCE_DIR}/src)
+    INCLUDE_DIRECTORIES(..)
     
 ELSE()
 
@@ -86,7 +87,7 @@ IF(NOT DEPENDENCIES_ONLY)
     SET(PYBIND11_FINDPYTHON ON)
     ADD_SUBDIRECTORY(external/pybind11)
     INCLUDE_DIRECTORIES(external/pybind11)
-    pybind11_add_module(picsl_greedy src/GreedyPythonBindings.cxx)
+    pybind11_add_module(picsl_greedy GreedyPythonBindings.cxx)
     TARGET_INCLUDE_DIRECTORIES(picsl_greedy PRIVATE ${Greedy_INCLUDE_DIRS})
     TARGET_LINK_LIBRARIES(picsl_greedy PUBLIC ${ITK_LIBRARIES} ${VTK_LIBRARIES} greedyapi lmshootapi multichunkgreedyapi)
     install(TARGETS picsl_greedy DESTINATION .)
