@@ -1,14 +1,14 @@
 /*=========================================================================
 
-  Program:   C3D: Command-line companion tool to ITK-SNAP
-  Module:    Convert3DMain.cxx
+  Program:   picsl_greedy: Greedy Python Bindings
+  Module:    GreedyPythonBindings.cxx
   Language:  C++
-  Website:   itksnap.org/c3d
+  Website:   https://greedy.readthedocs.io/
   Copyright (c) 2024 Paul A. Yushkevich
 
-  This file is part of C3D, a command-line companion tool to ITK-SNAP
+  This file is part of Greedy, a command-line companion registration tool
 
-  C3D is free software: you can redistribute it and/or modify
+  Greedy is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
