@@ -82,11 +82,10 @@ cmake --build ITK/build --target install $MAKEFLAGS $CMAKE_RELEASE_COMMAND
 #cmake --build VTK/build --target install --config Release
 
 # Build Greedy
-# git clone -b master https://github.com/pyushkevich/greedy.git greedy
+git clone -b master https://github.com/pyushkevich/greedy.git greedy
 cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=./install \
-    -DGREEDY_BUILD_LMSHOOT=ON \
     -DGREEDY_BUILD_LMSHOOT=ON \
     -DGREEDY_BUILD_WRAPPING=OFF \
     -DCMAKE_PREFIX_PATH="$PWD/install" \
