@@ -16,18 +16,19 @@ ls -lh ..
 LIB_LOCATION=build
 if [[ $1 =~ ubuntu-.* ]]; then
   VTK_BINARY=vtk-wheel-sdk-9.3.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.tar.xz
-  DYLD_SUFFIX=so
+  LIB_SUFFIX=so
   MAKEFLAGS="-- -j 8"
 elif [[ $1 == macos-13 ]]; then
   VTK_BINARY=vtk-wheel-sdk-9.3.1-cp310-cp310-macosx_10_10_x86_64.tar.xz
-  DYLD_SUFFIX=dylib
+  LIB_SUFFIX=dylib
   MAKEFLAGS="-- -j 8"
 elif [[ $1 == macos-14 ]]; then
   VTK_BINARY=vtk-wheel-sdk-9.3.1-cp310-cp310-macosx_11_0_arm64.tar.xz
-  DYLD_SUFFIX=dylib
+  LIB_SUFFIX=dylib
+  MAKEFLAGS="-- -j 8"
 elif [[ $1 =~ windows-.* ]]; then
   VTK_BINARY=vtk-wheel-sdk-9.3.1-cp310-cp310-win_amd64.tar.xz
-  DYLD_SUFFIX=dll
+  LIB_SUFFIX=dll
   LIB_LOCATION=bin
   CMAKE_RELEASE_COMMAND="--config Release"
 else
@@ -50,7 +51,7 @@ cmake --build eigen/build --target install $MAKEFLAGS $CMAKE_RELEASE_COMMAND
 mkdir -p install/vtk install/vtk/shared
 curl -L https://www.vtk.org/files/release/9.3/${VTK_BINARY} -o ./install/vtk/vtk-wheel-sdk.tar.xz
 tar -xJvf ./install/vtk/vtk-wheel-sdk.tar.xz --strip-components 1 -C $PWD/install/vtk
-ln $(find $PWD/install/vtk/${LIB_LOCATION} -name "*.${DYLD_SUFFIX}") install/vtk/shared
+ln $(find $PWD/install/vtk/${LIB_LOCATION} -name "*.${LIB_SUFFIX}") install/vtk/shared
 
 # Link the shared libraries needed for delocate into a simple directory
 
