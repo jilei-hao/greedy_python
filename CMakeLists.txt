@@ -61,8 +61,7 @@ IF(FETCH_DEPENDENCIES)
         GIT_TAG        master
     )
     FetchContent_MakeAvailable(Greedy)
-    # INCLUDE_DIRECTORIES(${greedy_SOURCE_DIR}/src)
-    INCLUDE_DIRECTORIES(..)
+    INCLUDE_DIRECTORIES(${greedy_SOURCE_DIR}/src)
     
 ELSE()
 

@@ -93,6 +93,6 @@ cmake \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DVTK_DIR=$PWD/install/vtk/vtk-9.3.1.data/headers/cmake \
     -B greedy/build \
-    ..
+    greedy
 
 cmake --build greedy/build --target install $MAKEFLAGS $CMAKE_RELEASE_COMMAND
