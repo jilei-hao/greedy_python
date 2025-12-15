@@ -523,12 +523,13 @@ public:
 
     // Get list of cached labels for file check bypass
     std::set<std::string> cachedLabels = GetCachedObjectNames();
+    std::vector<std::string> cachedLabelsVec(cachedLabels.begin(), cachedLabels.end());
 
     // Parse the command line with file check bypass for cached labels
     PropagationParametersType pParam;
     GreedyParameters gParam;
     CommandLineHelper cl(cmd.c_str());
-    cl.set_file_check_bypass_labels(cachedLabels);
+    cl.set_file_check_bypass_labels(cachedLabelsVec);
     ParseCommandLine(cl, pParam, gParam);
 
     // Build propagation input
