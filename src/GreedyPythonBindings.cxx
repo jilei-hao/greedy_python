@@ -534,18 +534,33 @@ public:
 
     // Build propagation input
     PropagationInputBuilderType builder;
-    builder.SetPropagationParameters(pParam);
-    builder.SetGreedyParameters(gParam);
 
-    // Set cached images if filenames match cached labels
-    if(m_CachedImages4D.count(pParam.fn_img4d))
-      builder.SetImage4D(m_CachedImages4D[pParam.fn_img4d]);
+    // Check if any images are cached (in-memory mode)
+    bool hasCachedImages = m_CachedImages4D.count(pParam.fn_img4d) > 0 ||
+                           m_CachedLabelImages3D.count(pParam.fn_seg3d) > 0 ||
+                           m_CachedLabelImages4D.count(pParam.fn_seg4d) > 0;
 
-    if(m_CachedLabelImages3D.count(pParam.fn_seg3d))
-      builder.SetReferenceSegmentationIn3D(m_CachedLabelImages3D[pParam.fn_seg3d]);
+    if(hasCachedImages)
+    {
+      // Use API-style configuration with cached images
+      builder.SetPropagationParameters(pParam);
+      builder.SetGreedyParameters(gParam);
 
-    if(m_CachedLabelImages4D.count(pParam.fn_seg4d))
-      builder.SetReferenceSegmentationIn4D(m_CachedLabelImages4D[pParam.fn_seg4d]);
+      // Set cached images if filenames match cached labels
+      if(m_CachedImages4D.count(pParam.fn_img4d))
+        builder.SetImage4D(m_CachedImages4D[pParam.fn_img4d]);
+
+      if(m_CachedLabelImages3D.count(pParam.fn_seg3d))
+        builder.SetReferenceSegmentationIn3D(m_CachedLabelImages3D[pParam.fn_seg3d]);
+
+      if(m_CachedLabelImages4D.count(pParam.fn_seg4d))
+        builder.SetReferenceSegmentationIn4D(m_CachedLabelImages4D[pParam.fn_seg4d]);
+    }
+    else
+    {
+      // Use CLI-style configuration (reads files from disk)
+      builder.ConfigForCLI(pParam, gParam);
+    }
 
     auto pInput = builder.BuildPropagationInput();
 
@@ -582,7 +597,7 @@ public:
     return py::none();
   }
 
-  void SetCachedImage(std::string label, py::object object)
+  void SetCachedImage(std::string label, py::object object, bool isLabelImage = false)
   {
     py::object sitk = py::module_::import("SimpleITK");
 
@@ -599,7 +614,7 @@ public:
     if(ndim == 4)
     {
       // 4D label image (short) or 4D intensity image (TReal)
-      if(pixelType.find("16-bit signed integer") != std::string::npos)
+      if(isLabelImage)
       {
         ImageImport<TLabelImage4D> import(object);
         m_CachedLabelImages4D[label] = import.GetImage();
