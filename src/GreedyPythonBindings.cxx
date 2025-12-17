@@ -58,7 +58,8 @@ public:
   using SpacingType = typename ImageType::SpacingType;
   using PointType = typename ImageType::PointType;
 
-  using ImportArray = py::array_t<double, py::array::c_style | py::array::forcecast>;
+  // Use the correct component type for the import array to avoid type mismatch
+  using ImportArray = py::array_t<ComponentType, py::array::c_style | py::array::forcecast>;
   static constexpr unsigned int VDim = ImageType::ImageDimension;
 
   ImageImport(py::object sitk_image)
@@ -532,35 +533,34 @@ public:
     cl.set_file_check_bypass_labels(cachedLabelsVec);
     ParseCommandLine(cl, pParam, gParam);
 
-    // Build propagation input
+    // Build propagation input - always use ConfigForCLI for consistent behavior
+    // Pre-populate builder with any cached images before calling ConfigForCLI
     PropagationInputBuilderType builder;
 
-    // Check if any images are cached (in-memory mode)
-    bool hasCachedImages = m_CachedImages4D.count(pParam.fn_img4d) > 0 ||
-                           m_CachedLabelImages3D.count(pParam.fn_seg3d) > 0 ||
-                           m_CachedLabelImages4D.count(pParam.fn_seg4d) > 0;
-
-    if(hasCachedImages)
+    // Pre-populate builder with cached images if available
+    if(m_CachedImages4D.count(pParam.fn_img4d))
     {
-      // Use API-style configuration with cached images
-      builder.SetPropagationParameters(pParam);
-      builder.SetGreedyParameters(gParam);
-
-      // Set cached images if filenames match cached labels
-      if(m_CachedImages4D.count(pParam.fn_img4d))
-        builder.SetImage4D(m_CachedImages4D[pParam.fn_img4d]);
-
-      if(m_CachedLabelImages3D.count(pParam.fn_seg3d))
-        builder.SetReferenceSegmentationIn3D(m_CachedLabelImages3D[pParam.fn_seg3d]);
-
-      if(m_CachedLabelImages4D.count(pParam.fn_seg4d))
-        builder.SetReferenceSegmentationIn4D(m_CachedLabelImages4D[pParam.fn_seg4d]);
+      std::cout << "Using cached 4D image for '" << pParam.fn_img4d << "'" << std::endl;
+      builder.SetImage4D(m_CachedImages4D[pParam.fn_img4d]);
     }
-    else
+
+    if(m_CachedLabelImages3D.count(pParam.fn_seg3d))
     {
-      // Use CLI-style configuration (reads files from disk)
-      builder.ConfigForCLI(pParam, gParam);
+      std::cout << "Using cached 3D segmentation for '" << pParam.fn_seg3d << "'" << std::endl;
+      builder.SetReferenceSegmentationIn3D(m_CachedLabelImages3D[pParam.fn_seg3d]);
     }
+
+    if(m_CachedLabelImages4D.count(pParam.fn_seg4d))
+    {
+      std::cout << "Using cached 4D segmentation for '" << pParam.fn_seg4d << "'" << std::endl;
+      builder.SetReferenceSegmentationIn4D(m_CachedLabelImages4D[pParam.fn_seg4d]);
+      // Ensure the flag is set correctly when using 4D segmentation
+      pParam.use4DSegInput = true;
+    }
+
+    // ConfigForCLI will now skip reading files that are already set
+    // This ensures consistent behavior between CLI and Python API
+    builder.ConfigForCLI(pParam, gParam);
 
     auto pInput = builder.BuildPropagationInput();
 
@@ -597,7 +597,7 @@ public:
     return py::none();
   }
 
-  void SetCachedImage(std::string label, py::object object, bool isLabelImage = false)
+  void SetCachedImage(std::string label, py::object object)
   {
     py::object sitk = py::module_::import("SimpleITK");
 
@@ -613,8 +613,8 @@ public:
 
     if(ndim == 4)
     {
-      // 4D label image (short) or 4D intensity image (TReal)
-      if(isLabelImage)
+      // if label starts with "seg", it's a 4d label image
+      if(label.rfind("seg", 0) == 0)
       {
         ImageImport<TLabelImage4D> import(object);
         m_CachedLabelImages4D[label] = import.GetImage();
