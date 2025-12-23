@@ -141,3 +141,101 @@ plt.legend()
 plt.title('Metric value')
 plt.savefig('metric.png')
 ```
+
+Propagation
+----------
+The Propagation tool warps a 3D segmentation from a reference time point to all target time points in a 4D image. This is useful for generating 4D segmentation from sparse 3D segmentation.
+
+### Basic Usage (Files on Disk)
+
+```python
+from picsl_greedy import Propagation
+
+p = Propagation()
+
+# Propagate segmentation from time point 5 to other time points
+p.run('-i img4d.nii.gz '
+      '-sr3 seg_tp05.nii.gz '
+      '-tpr 5 '
+      '-tpt 1,2,3,4,6,7,8,9 '
+      '-o /path/to/output '
+      '-n 100x100 -m SSD -s 3mm 1.5mm')
+```
+
+### Using SimpleITK Images
+
+You can pass SimpleITK images directly to avoid disk I/O overhead. Use arbitrary strings as placeholders and pass the actual images as keyword arguments:
+
+```python
+from picsl_greedy import Propagation
+import SimpleITK as sitk
+
+# Load images
+img4d = sitk.ReadImage('img4d.nii.gz')
+seg3d = sitk.ReadImage('seg_tp05.nii.gz')
+
+p = Propagation()
+
+# Run propagation with in-memory images
+p.run('-i my_img4d '
+      '-sr3 my_seg3d '
+      '-tpr 5 '
+      '-tpt 1,2,3,4,6,7,8,9 '
+      '-n 100x100 -m SSD -s 3mm 1.5mm',
+      my_img4d=img4d, my_seg3d=seg3d)
+
+# Retrieve 4D segmentation output
+seg4d_out = p['seg4d']
+sitk.WriteImage(seg4d_out, 'seg4d_propagated.nii.gz')
+
+# Retrieve 3D segmentation for a specific time point
+seg_tp03 = p['seg_03']
+sitk.WriteImage(seg_tp03, 'seg_tp03.nii.gz')
+
+# Get list of processed time points
+time_points = p.get_time_points()
+print(f'Processed time points: {time_points}')
+```
+
+### Using 4D Segmentation Input
+
+If your reference segmentation is already embedded in a 4D image, use `-sr4` instead of `-sr3`:
+
+```python
+from picsl_greedy import Propagation
+import SimpleITK as sitk
+
+img4d = sitk.ReadImage('img4d.nii.gz')
+seg4d_sparse = sitk.ReadImage('seg4d_sparse.nii.gz')  # Only time point 5 has segmentation
+
+p = Propagation()
+
+p.run('-i my_img4d '
+      '-sr4 my_seg4d '
+      '-tpr 5 '
+      '-tpt 1,2,3,4,6,7,8,9 '
+      '-n 100x100 -m SSD',
+      my_img4d=img4d, my_seg4d=seg4d_sparse)
+
+# Get complete 4D segmentation
+seg4d_complete = p['seg4d']
+```
+
+### Command Line Options
+
+| Option | Description |
+|--------|-------------|
+| `-i <image>` | 4D input image |
+| `-sr3 <image>` | 3D reference segmentation at reference time point |
+| `-sr4 <image>` | 4D reference segmentation (only reference time point used) |
+| `-tpr <int>` | Reference time point |
+| `-tpt <list>` | Target time points (comma-separated) |
+| `-o <dir>` | Output directory (for file-based output) |
+| `-sr-op <pattern>` | Output filename pattern, e.g., `Seg_%02d.nii.gz` |
+| `-n <schedule>` | Multi-resolution schedule (default: `100x100`) |
+| `-m <metric>` | Registration metric: `SSD`, `NCC`, `NMI` (default: `SSD`) |
+| `-s <sigmas>` | Smoothing kernels (default: `3mm 1.5mm`) |
+| `-dof <int>` | Affine degrees of freedom (default: `12`) |
+| `-threads <int>` | Number of threads |
+| `-V <0\|1\|2>` | Verbosity level |
+```

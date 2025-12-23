@@ -29,12 +29,17 @@
 #include "pybind11/numpy.h"
 #include "pybind11/iostream.h"
 #include <iostream>
+#include <map>
 #include <itkImage.h>
 #include <itkMatrixOffsetTransformBase.h>
 #include <itkMetaDataObject.h>
 #include <MultiChunkGreedy.h>
 #include <PointSetGeodesicShooting.h>
 #include <PointSetGeodesicToWarp.h>
+#include <PropagationAPI.h>
+#include <PropagationParameters.hxx>
+#include <PropagationInputBuilder.h>
+#include <PropagationIO.h>
 
 namespace py=pybind11;
 
@@ -53,7 +58,8 @@ public:
   using SpacingType = typename ImageType::SpacingType;
   using PointType = typename ImageType::PointType;
 
-  using ImportArray = py::array_t<double, py::array::c_style | py::array::forcecast>;
+  // Use the correct component type for the import array to avoid type mismatch
+  using ImportArray = py::array_t<ComponentType, py::array::c_style | py::array::forcecast>;
   static constexpr unsigned int VDim = ImageType::ImageDimension;
 
   ImageImport(py::object sitk_image)
@@ -484,6 +490,283 @@ void instantiate_lmshoot(py::handle m, const char *name)
     ;
 }
 
+
+// List of greedy commands that are recognized by propagation mode
+const std::set<std::string> propagation_greedy_cmd {
+  "-threads", "-m", "-n", "-s", "-dof", "-dump-pyramid", "-dump-metric", "-float", "-V"
+};
+
+template <typename TReal>
+class PropagationAPIWrapper
+{
+public:
+  using PropagationParametersType = propagation::PropagationParameters;
+  using PropagationInputBuilderType = propagation::PropagationInputBuilder<TReal>;
+  using PropagationAPIType = propagation::PropagationAPI<TReal>;
+  using PropagationOutputType = propagation::PropagationOutput<TReal>;
+  using MeshSpec = propagation::MeshSpec;
+
+  // Image types matching PropagationAPI
+  using TImage4D = itk::Image<TReal, 4>;
+  using TLabelImage3D = itk::Image<short, 3>;
+  using TLabelImage4D = itk::Image<short, 4>;
+
+  void Run(
+    const string &cmd, py::object sout, py::object serr, const py::kwargs& kwargs)
+  {
+    // Redirect the outputs if needed
+    py::scoped_ostream_redirect r_out(std::cout, sout);
+    py::scoped_ostream_redirect r_err(std::cerr, serr);
+
+    // Cache input images from kwargs
+    for(auto it : kwargs)
+      SetCachedImage(it.first.cast<std::string>(), it.second.cast<py::object>());
+
+    // Get list of cached labels for file check bypass
+    std::set<std::string> cachedLabels = GetCachedObjectNames();
+    std::vector<std::string> cachedLabelsVec(cachedLabels.begin(), cachedLabels.end());
+
+    // Parse the command line with file check bypass for cached labels
+    PropagationParametersType pParam;
+    GreedyParameters gParam;
+    CommandLineHelper cl(cmd.c_str());
+    cl.set_file_check_bypass_labels(cachedLabelsVec);
+    ParseCommandLine(cl, pParam, gParam);
+
+    // Build propagation input - always use ConfigForCLI for consistent behavior
+    // Pre-populate builder with any cached images before calling ConfigForCLI
+    PropagationInputBuilderType builder;
+
+    // Pre-populate builder with cached images if available
+    if(m_CachedImages4D.count(pParam.fn_img4d))
+    {
+      std::cout << "Using cached 4D image for '" << pParam.fn_img4d << "'" << std::endl;
+      builder.SetImage4D(m_CachedImages4D[pParam.fn_img4d]);
+    }
+
+    if(m_CachedLabelImages3D.count(pParam.fn_seg3d))
+    {
+      std::cout << "Using cached 3D segmentation for '" << pParam.fn_seg3d << "'" << std::endl;
+      builder.SetReferenceSegmentationIn3D(m_CachedLabelImages3D[pParam.fn_seg3d]);
+    }
+
+    if(m_CachedLabelImages4D.count(pParam.fn_seg4d))
+    {
+      std::cout << "Using cached 4D segmentation for '" << pParam.fn_seg4d << "'" << std::endl;
+      builder.SetReferenceSegmentationIn4D(m_CachedLabelImages4D[pParam.fn_seg4d]);
+      // Ensure the flag is set correctly when using 4D segmentation
+      pParam.use4DSegInput = true;
+    }
+
+    // ConfigForCLI will now skip reading files that are already set
+    // This ensures consistent behavior between CLI and Python API
+    builder.ConfigForCLI(pParam, gParam);
+
+    auto pInput = builder.BuildPropagationInput();
+
+    PropagationAPIType api(pInput);
+    api.Run();
+
+    // Cache output for retrieval
+    m_Output = api.GetOutput();
+  }
+
+  py::object GetCachedImage(std::string label)
+  {
+    if(!m_Output || !m_Output->IsInitialized())
+      return py::none();
+
+    // Get 4D segmentation output
+    if(label == "seg4d")
+    {
+      auto seg4d = m_Output->GetSegmentation4D();
+      if(seg4d.IsNotNull())
+        return ImageExport<TLabelImage4D>(seg4d).sitk_image;
+    }
+    // Get 3D segmentation for specific timepoint (e.g., "seg_01", "seg_02")
+    else if(label.rfind("seg_", 0) == 0)
+    {
+      try {
+        unsigned int tp = std::stoi(label.substr(4));
+        auto seg3d = m_Output->GetSegmentation3D(tp);
+        if(seg3d.IsNotNull())
+          return ImageExport<TLabelImage3D>(seg3d).sitk_image;
+      } catch(...) {}
+    }
+
+    return py::none();
+  }
+
+  void SetCachedImage(std::string label, py::object object)
+  {
+    py::object sitk = py::module_::import("SimpleITK");
+
+    if(object.is_none())
+      return;
+
+    if(!py::isinstance(object, sitk.attr("Image")))
+      throw std::runtime_error("Input must be a SimpleITK image");
+
+    // Determine image type based on dimensionality and pixel type
+    unsigned int ndim = object.attr("GetDimension")().cast<unsigned int>();
+    std::string pixelType = object.attr("GetPixelIDTypeAsString")().cast<std::string>();
+
+    if(ndim == 4)
+    {
+      // if label starts with "seg", it's a 4d label image
+      if(label.rfind("seg", 0) == 0)
+      {
+        ImageImport<TLabelImage4D> import(object);
+        m_CachedLabelImages4D[label] = import.GetImage();
+      }
+      else
+      {
+        ImageImport<TImage4D> import(object);
+        m_CachedImages4D[label] = import.GetImage();
+      }
+    }
+    else if(ndim == 3)
+    {
+      // 3D label image
+      ImageImport<TLabelImage3D> import(object);
+      m_CachedLabelImages3D[label] = import.GetImage();
+    }
+    else
+    {
+      throw std::runtime_error("Unsupported image dimensionality for propagation");
+    }
+  }
+
+  std::set<std::string> GetCachedObjectNames()
+  {
+    std::set<std::string> names;
+    for(auto& kv : m_CachedImages4D) names.insert(kv.first);
+    for(auto& kv : m_CachedLabelImages3D) names.insert(kv.first);
+    for(auto& kv : m_CachedLabelImages4D) names.insert(kv.first);
+    return names;
+  }
+
+  py::list GetTimePoints()
+  {
+    py::list result;
+    if(m_Output && m_Output->IsInitialized())
+    {
+      for(auto tp : m_Output->GetTimePointList())
+        result.append(tp);
+    }
+    return result;
+  }
+
+private:
+  void ParseCommandLine(CommandLineHelper &cl, PropagationParametersType &pParam, GreedyParameters &gParam)
+  {
+    std::string arg;
+
+    while (cl.read_command(arg))
+    {
+      if (arg == "-i")
+      {
+        pParam.fn_img4d = cl.read_existing_filename();
+      }
+      else if (arg == "-o")
+      {
+        pParam.outdir = cl.read_output_dir();
+      }
+      else if (arg == "-sr3")
+      {
+        pParam.fn_seg3d = cl.read_existing_filename();
+      }
+      else if (arg == "-sr4")
+      {
+        pParam.fn_seg4d = cl.read_existing_filename();
+        pParam.use4DSegInput = true;
+      }
+      else if (arg == "-sr-op")
+      {
+        pParam.fnsegout_pattern = cl.read_string();
+      }
+      else if (arg == "-sr-mop")
+      {
+        pParam.fnmeshout_pattern = cl.read_string();
+      }
+      else if (arg == "-emr")
+      {
+        MeshSpec meshspec;
+        meshspec.cached = false;
+        meshspec.fn_mesh = cl.read_existing_filename();
+        meshspec.fnout_pattern = cl.read_string();
+        pParam.extra_mesh_list.push_back(meshspec);
+      }
+      else if (arg == "-tpr")
+      {
+        pParam.refTP = cl.read_integer();
+      }
+      else if (arg == "-tpt")
+      {
+        std::vector<int> result = cl.read_int_vector(',');
+        std::set<int> unique(result.begin(), result.end());
+        if (unique.size() == 0)
+          throw GreedyException("Propagation: Target timepoints list cannot be empty!");
+
+        for (int n : unique)
+        {
+          if (n <= 0)
+            throw GreedyException("%d is not a valid time point value!", n);
+          pParam.targetTPs.push_back(n);
+        }
+      }
+      else if (arg == "-debug")
+      {
+        pParam.debug = true;
+        pParam.debug_dir = cl.read_output_dir();
+      }
+      else if (arg == "-verbose")
+      {
+        int level = cl.read_integer();
+        if(level < 0 || level >= PropagationParametersType::VERB_INVALID)
+          throw GreedyException("Invalid propagation verbosity level %d", level);
+
+        pParam.verbosity = (PropagationParametersType::Verbosity)level;
+      }
+      else if (propagation_greedy_cmd.count(arg))
+      {
+        gParam.ParseCommandLine(arg, cl);
+      }
+      else
+        throw GreedyException("Unknown parameter: %s", arg.c_str());
+    }
+  }
+
+  // Cached input images by label
+  std::map<std::string, typename TImage4D::Pointer> m_CachedImages4D;
+  std::map<std::string, typename TLabelImage3D::Pointer> m_CachedLabelImages3D;
+  std::map<std::string, typename TLabelImage4D::Pointer> m_CachedLabelImages4D;
+
+  // Cached output
+  std::shared_ptr<PropagationOutputType> m_Output;
+};
+
+
+template <typename TReal>
+void instantiate_propagation(py::handle m, const char *name)
+{
+  using API = PropagationAPIWrapper<TReal>;
+  py::class_<API>(m, name, "Python API for the PICSL greedy propagation tool")
+    .def(py::init<>([]() {
+      auto *c = new API();
+      return c;
+    }))
+    .def("run", &API::Run,
+         "Execute the propagation command",
+         py::arg("command"),
+         py::arg("out") = py::module_::import("sys").attr("stdout"),
+         py::arg("err") = py::module_::import("sys").attr("stdout"))
+    .def("__getitem__", &API::GetCachedImage)
+    .def("__setitem__", &API::SetCachedImage)
+    .def("get_time_points", &API::GetTimePoints)
+    ;
+}
+
 PYBIND11_MODULE(picsl_greedy, m) {
   instantiate_greedy<double, 2>(m, "Greedy2D");
   instantiate_greedy<double, 3>(m, "Greedy3D");
@@ -497,4 +780,7 @@ PYBIND11_MODULE(picsl_greedy, m) {
 
   instantiate_multichunk_greedy<2>(m, "MultiChunkGreedy2D");
   instantiate_multichunk_greedy<3>(m, "MultiChunkGreedy3D");
+
+  instantiate_propagation<double>(m, "Propagation");
+  instantiate_propagation<float>(m, "PropagationFloat");
 };
