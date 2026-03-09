@@ -2,3 +2,4 @@ build*/
 dist
 .vscode
 CMakeLists.txt.user
+.DS_Store
