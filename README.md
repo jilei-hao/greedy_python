@@ -237,5 +237,92 @@ seg4d_complete = p['seg4d']
 | `-s <sigmas>` | Smoothing kernels (default: `3mm 1.5mm`) |
 | `-dof <int>` | Affine degrees of freedom (default: `12`) |
 | `-threads <int>` | Number of threads |
-| `-V <0\|1\|2>` | Verbosity level |
+| `-V <level>` | Verbosity level: 0, 1, or 2 |
+
+Python-Friendly API
+-------------------
+In addition to the command-string interface shown above, the package exposes a higher-level Python API that accepts `sitk.Image` and `numpy` objects directly and returns typed results — no string-building required.
+
+### `GreedyRegistration`
+
+```python
+from picsl_greedy import GreedyRegistration
+import SimpleITK as sitk
+
+fixed  = sitk.ReadImage('phantom01_fixed.nii.gz')
+moving = sitk.ReadImage('phantom01_moving.nii.gz')
+mask   = sitk.ReadImage('phantom01_mask.nii.gz')
+
+g = GreedyRegistration(dim=3)
+
+# Affine (rigid) registration — returns AffineResult(matrix, metric_log)
+affine = g.affine_register(fixed, moving, dof=6, metric='NMI', mask=mask)
+print('Affine matrix:\n', affine.matrix)
+
+# Deformable registration — returns DeformableResult(warp, metric_log, inverse_warp)
+deformable = g.deformable_register(
+    fixed, moving,
+    metric='NCC 2x2x2',
+    iterations='100x50x10',
+    initial=affine.matrix,
+    return_inverse=True,
+)
+
+# Reslice moving into fixed space
+resliced = g.reslice(fixed, moving, [deformable.warp, affine.matrix])
+sitk.WriteImage(resliced, 'phantom01_warped.nii.gz')
+```
+
+`GreedyRegistration` constructor parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `dim` | `{2, 3}` | `3` | Image dimensionality |
+| `float_precision` | `bool` | `False` | Use float32 instead of float64 |
+| `threads` | `int` | `None` | CPU thread count; `None` = Greedy default |
+
+### `PropagationWrapper`
+
+```python
+from picsl_greedy import PropagationWrapper
+import SimpleITK as sitk
+
+img4d = sitk.ReadImage('img4d.nii.gz')
+seg3d = sitk.ReadImage('seg_tp05.nii.gz')
+
+p = PropagationWrapper()
+
+# Returns a dict with 'seg4d' and per-time-point keys like 'seg_01', 'seg_03', …
+result = p.run(img4d, seg3d, ref_tp=5, target_tps=[1, 2, 3, 4, 6, 7])
+
+sitk.WriteImage(result['seg4d'], 'seg4d_propagated.nii.gz')
+sitk.WriteImage(result['seg_03'], 'seg_tp03.nii.gz')
+```
+
+`PropagationWrapper.run()` key parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `img4d` | `str` or `sitk.Image` | — | 4D input image |
+| `seg_ref` | `str` or `sitk.Image` | — | Reference segmentation |
+| `ref_tp` | `int` | — | Reference time point (1-based) |
+| `target_tps` | `list[int]` | — | Target time points to propagate to |
+| `seg_is_4d` | `bool` | `False` | Treat `seg_ref` as 4D (`-sr4`) |
+| `metric` | `str` | `'SSD'` | Similarity metric |
+| `iterations` | `str` | `'100x100'` | Multi-resolution schedule |
+| `smooth_pre` | `str` | `'3mm'` | Pre-smoothing sigma |
+| `smooth_post` | `str` | `'1.5mm'` | Post-smoothing sigma |
+
+### `LMShootWrapper`
+
+```python
+from picsl_greedy import LMShootWrapper
+
+lm = LMShootWrapper(dim=3)
+
+# Fit a geodesic trajectory from landmarks
+lm.fit('-m template_pts.vtk subject_pts.vtk -s 3mm -o trajectory.vtk')
+
+# Apply the trajectory to produce a warp field
+lm.apply('-r trajectory.vtk -d warp.nii.gz -g template_image.nii.gz')
 ```

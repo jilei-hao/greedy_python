@@ -69,18 +69,18 @@ public:
     if(!py::isinstance(sitk_image, sitk.attr("Image")))
       throw std::runtime_error("Input not a SimpleITK image!");
 
-    // Check that the number of components is correct
+    // Get the number of components per pixel (>1 for vector/displacement-field images)
     unsigned int ncomp = sitk_image.attr("GetNumberOfComponentsPerPixel")().cast<int>();
-    if(ncomp != 1)
-      throw std::runtime_error("Vector images are not supported!");
 
     // Extract the image array from the image
     py::object arr = sitk.attr("GetArrayFromImage")(sitk_image);
     ImportArray arr_c = arr.cast<ImportArray>();
 
-    // Check that the image dimensions are correct
+    // Check that the image dimensions are correct.
+    // Scalar images have VDim axes; vector images have an extra trailing component axis.
     py::buffer_info arr_info = arr_c.request();
-    if(arr_info.ndim != VDim)
+    unsigned int expected_ndim = VDim + (ncomp > 1 ? 1 : 0);
+    if(arr_info.ndim != expected_ndim)
       throw std::runtime_error("Incompatible array dimensions!");
 
     // Get image spacing, origin, direction
@@ -93,7 +93,7 @@ public:
     typename ImageType::PointType itk_origin;
     typename ImageType::DirectionType itk_dir;
     int q = 0;
-    for(unsigned int i = 0; i < arr_info.ndim; i++)
+    for(unsigned int i = 0; i < VDim; i++)
     {
       itk_region.SetSize(i, arr_info.shape[(VDim-1) - i]); // Shape is reversed between ITK and Numpy
       itk_spacing[i] = spacing[i];
@@ -151,16 +151,15 @@ public:
 
   AffineTransformImport(ImportArray arr)
   {
-    if(arr.ndim() != 2 || arr.shape(0) != VDim+1 || arr.shape(0) != VDim+1)
+    if(arr.ndim() != 2 || arr.shape(0) != VDim+1 || arr.shape(1) != VDim+1)
       throw std::runtime_error("Incorrect array dimensions for affine transform");
 
     vnl_matrix<double> Q(VDim+1, VDim+1);
-    for(size_t r = 0; r < VDim; r++)
-      for(size_t c = 0; c < VDim; c++)
+    for(size_t r = 0; r < VDim+1; r++)
+      for(size_t c = 0; c < VDim+1; c++)
         Q(r,c) = arr.at(r,c);
 
-    typedef itk::MatrixOffsetTransformBase<double, VDim, VDim> TransformType;
-    typename TransformType::Pointer tran = TransformType::New();
+    tran = TransformType::New();
     Greedy::MapRASMatrixToITKTransform(Q, tran.GetPointer());
   }
 
@@ -304,6 +303,7 @@ public:
   py::object GetCachedObject(std::string label)
   {
     using ImageBase = itk::ImageBase<VDim>;
+    using ShortImageType = itk::Image<short, VDim>;
     itk::Object *object = api.GetCachedObject(label);
 
     if(auto *ibase = dynamic_cast<ImageBase *>(object))
@@ -311,6 +311,9 @@ public:
       CompositeImagePointer cimg = LDDMMType::as_cimg(ibase);
       if(cimg)
         return ImageExport<CompositeImageType>(cimg).sitk_image;
+      // Fallback: export as short label image (e.g., result of LABEL interpolation reslice)
+      if(auto *simg = dynamic_cast<ShortImageType *>(ibase))
+        return ImageExport<ShortImageType>(simg).sitk_image;
     }
     else if(auto *tform = dynamic_cast<TransformType *>(object))
     {
@@ -332,9 +335,27 @@ public:
     }
     else if(py::isinstance(object, sitk.attr("Image")))
     {
-      // Pass as a "real" input
-      ImageImport<CompositeImageType> import(object);
-      api.AddCachedInputObject(label, import.GetImage());
+      unsigned int ncomp = object.attr("GetNumberOfComponentsPerPixel")().cast<unsigned int>();
+      // Displacement fields (ncomp == VDim, ncomp > 1) must be stored as VectorImageType
+      // so that ReadTransformChain's CheckCache<VectorImageType> can identify them.
+      if(ncomp == VDim && ncomp > 1)
+      {
+        // Import as CompositeImageType to extract geometry and raw scalar buffer
+        ImageImport<CompositeImageType> cimg_import(object);
+        CompositeImageType *cimg = cimg_import.GetImage();
+        // Allocate a VectorImageType with the same geometry
+        typename LDDMMType::VectorImagePointer vimg = LDDMMType::new_vimg(cimg);
+        // Both types have identical memory layout: VDim scalars per pixel, tightly packed
+        memcpy(vimg->GetBufferPointer(), cimg->GetBufferPointer(),
+               cimg->GetPixelContainer()->Size() * sizeof(TPixel));
+        api.AddCachedInputObject(label, vimg.GetPointer());
+      }
+      else
+      {
+        // Scalar or multi-component non-warp image
+        ImageImport<CompositeImageType> import(object);
+        api.AddCachedInputObject(label, import.GetImage());
+      }
     }
     else if(auto arr = object.cast<nparray>())
     {
@@ -528,6 +549,7 @@ public:
 
     // Parse the command line with file check bypass for cached labels
     PropagationParametersType pParam;
+    pParam.writeOutputToDisk = false;  // default to memory-only; set to true when -o is provided
     GreedyParameters gParam;
     CommandLineHelper cl(cmd.c_str());
     cl.set_file_check_bypass_labels(cachedLabelsVec);
@@ -671,6 +693,7 @@ private:
       else if (arg == "-o")
       {
         pParam.outdir = cl.read_output_dir();
+        pParam.writeOutputToDisk = true;
       }
       else if (arg == "-sr3")
       {
@@ -767,7 +790,7 @@ void instantiate_propagation(py::handle m, const char *name)
     ;
 }
 
-PYBIND11_MODULE(picsl_greedy, m) {
+PYBIND11_MODULE(_picsl_greedy, m) {
   instantiate_greedy<double, 2>(m, "Greedy2D");
   instantiate_greedy<double, 3>(m, "Greedy3D");
   instantiate_greedy<float, 2>(m, "GreedyFloat2D");

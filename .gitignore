@@ -1,4 +1,26 @@
 build*/
-dist
+dist/
 .vscode
 CMakeLists.txt.user
+<<<<<<< Updated upstream
+=======
+.DS_Store
+
+# Python build artifacts
+*.so
+*.dylib
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+pip-wheel-metadata/
+
+>>>>>>> Stashed changes

@@ -75,6 +75,23 @@ ELSE()
 
     FIND_PACKAGE(Greedy REQUIRED)
 
+    # Compatibility shim: Greedy built against an ITK with shared HDF5 may reference
+    # hdf5_cpp-shared / hdf5-shared / hdf5_hl-shared targets that no longer exist when
+    # linking against an ITK that ships static-only HDF5.  Create IMPORTED STATIC
+    # targets with the same names so the linker resolves them correctly.
+    FOREACH(_hdf5_variant "" "_cpp" "_hl" "_hl_cpp")
+        SET(_shared_tgt "hdf5${_hdf5_variant}-shared")
+        SET(_static_tgt "hdf5${_hdf5_variant}-static")
+        IF(TARGET ${_static_tgt} AND NOT TARGET ${_shared_tgt})
+            ADD_LIBRARY(${_shared_tgt} IMPORTED STATIC GLOBAL)
+            GET_TARGET_PROPERTY(_loc ${_static_tgt} IMPORTED_LOCATION_RELEASE)
+            IF(NOT _loc)
+                GET_TARGET_PROPERTY(_loc ${_static_tgt} IMPORTED_LOCATION)
+            ENDIF()
+            SET_TARGET_PROPERTIES(${_shared_tgt} PROPERTIES IMPORTED_LOCATION "${_loc}")
+        ENDIF()
+    ENDFOREACH()
+
 ENDIF()
 
 # Set up VTK
@@ -87,8 +104,8 @@ IF(NOT DEPENDENCIES_ONLY)
     SET(PYBIND11_FINDPYTHON ON)
     ADD_SUBDIRECTORY(external/pybind11)
     INCLUDE_DIRECTORIES(external/pybind11)
-    pybind11_add_module(picsl_greedy src/GreedyPythonBindings.cxx)
-    TARGET_INCLUDE_DIRECTORIES(picsl_greedy PRIVATE ${Greedy_INCLUDE_DIRS} ${Greedy_INCLUDE_DIRS}/propagation)
-    TARGET_LINK_LIBRARIES(picsl_greedy PUBLIC ${ITK_LIBRARIES} ${VTK_LIBRARIES} greedyapi lmshootapi multichunkgreedyapi propagationapi)
-    install(TARGETS picsl_greedy DESTINATION .)
+    pybind11_add_module(_picsl_greedy src/GreedyPythonBindings.cxx)
+    TARGET_INCLUDE_DIRECTORIES(_picsl_greedy PRIVATE ${Greedy_INCLUDE_DIRS} ${Greedy_INCLUDE_DIRS}/propagation)
+    TARGET_LINK_LIBRARIES(_picsl_greedy PUBLIC ${ITK_LIBRARIES} ${VTK_LIBRARIES} greedyapi lmshootapi multichunkgreedyapi propagationapi)
+    install(TARGETS _picsl_greedy DESTINATION picsl_greedy)
 ENDIF()
