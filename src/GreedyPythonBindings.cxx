@@ -311,6 +311,12 @@ public:
       CompositeImagePointer cimg = LDDMMType::as_cimg(ibase);
       if(cimg)
         return ImageExport<CompositeImageType>(cimg).sitk_image;
+
+      // as_cimg() only handles float types. Fall back to short for label
+      // images produced by LABEL-mode reslice (itk::Image<short, VDim>).
+      using ShortImageType = itk::Image<short, VDim>;
+      if(auto *simg = dynamic_cast<ShortImageType *>(ibase))
+        return ImageExport<ShortImageType>(simg).sitk_image;
     }
     else if(auto *tform = dynamic_cast<TransformType *>(object))
     {
