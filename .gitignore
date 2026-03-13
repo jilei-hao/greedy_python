@@ -2,8 +2,6 @@ build*/
 dist/
 .vscode
 CMakeLists.txt.user
-<<<<<<< Updated upstream
-=======
 .DS_Store
 
 # Python build artifacts
@@ -22,5 +20,3 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 pip-wheel-metadata/
-
->>>>>>> Stashed changes
